@@ -183,8 +183,8 @@ impl TerrainSpec {
     }
 }
 
-/// Every terrain in one course: rails, a step, a curb, holes, random blocks, stairs, a slope and
-/// a side slope, in that order, with `gap` m of flat ground after each. Each part starts at the
+/// Every terrain in one course: rails, a step, a curb, a side slope, holes, random blocks, stairs
+/// and a slope, in that order, with `gap` m of flat ground after each. Each part starts at the
 /// height the one before it ended, so the course climbs. The parts are drawn on one grid of
 /// `cell`, which must divide every part's cell.
 pub fn course(cell: f64, gap: f64, seed: u64) -> HeightGrid {
@@ -192,11 +192,13 @@ pub fn course(cell: f64, gap: f64, seed: u64) -> HeightGrid {
         TerrainSpec::Rails { h: 0.05, every: 5 },
         TerrainSpec::Step { h: 0.1 },
         TerrainSpec::Curb { h: 0.1 },
+        // Before the random blocks, where the robot still runs straight: the side slope's entry
+        // step grows to the left, and drifting there could make it too high to climb.
+        TerrainSpec::SideSlope { deg: 15.0 },
         TerrainSpec::Holes { h: 0.1, cell: 0.25 },
         TerrainSpec::Random { cell: 0.25, hmax: 0.1, seed },
         TerrainSpec::Stairs { rise: 0.08, tread: 0.25, steps: 4, skew_deg: 0.0 },
         TerrainSpec::Slope { deg: 15.0 },
-        TerrainSpec::SideSlope { deg: 15.0 },
     ];
     let ny = (WIDTH / cell).round() as usize;
     let gap_rows = (gap / cell).round() as usize;
@@ -279,7 +281,7 @@ mod tests {
         let g = course(0.05, 1.0, 0);
         let (_, cell, nx, ny, end) = g.layout();
         assert_eq!(ny, 70);
-        // Parts 4 + 2 + 2 + 4 + 4 + 1 + 3 + 3 m, each with 1 m of flat ground after it.
+        // Parts 4 + 2 + 2 + 3 + 4 + 4 + 1 + 3 m, each with 1 m of flat ground after it.
         assert!((nx as f64 * cell - 31.0).abs() < 1e-9, "length {}", nx as f64 * cell);
         let expected = 0.1 + 0.1 + 4.0 * 0.08 + 3.0 * 15f64.to_radians().tan();
         assert!((end - expected).abs() < 1e-12);
@@ -312,8 +314,8 @@ mod tests {
     #[test]
     fn the_course_keeps_the_slopes_smooth() {
         let g = course(0.05, 1.0, 0);
-        // No edges inside the slope (it starts 23 m in, after the stairs' 1 m of level ground).
-        let from = START_X + 4.0 + 1.0 + 2.0 + 1.0 + 2.0 + 1.0 + 4.0 + 1.0 + 4.0 + 1.0 + 1.0 + 1.0;
+        // No edges inside the slope (it starts 27 m in, after the stairs' 1 m of level ground).
+        let from = START_X + 4.0 + 1.0 + 2.0 + 1.0 + 2.0 + 1.0 + 3.0 + 1.0 + 4.0 + 1.0 + 4.0 + 1.0 + 1.0 + 1.0;
         assert!(g.edges().iter().all(|e| e.x < from + 0.01 || e.x > from + 2.99), "edges inside the slope");
     }
 }
