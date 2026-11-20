@@ -8,13 +8,14 @@
 
 ## 動かす
 
-必要なもの: Windows 10 / 11(64 ビット)、[Rust](https://www.rust-lang.org/)(MSVC)、ブラウザ。
+必要なもの: Windows 10 / 11(64 ビット)とブラウザ。ほかに入れるものはありません。
 
-```sh
-cargo build --release
-```
+1. [Releases](https://github.com/26m3005/crawler-sim/releases/latest) から `robot-sim-v0.1.0-windows-x64.zip` をダウンロードして、展開します。
+2. 中の `robot-sim.exe` をダブルクリックすると、ブラウザに操作の画面が開きます。
 
-できた `target\release\robot-sim.exe` をダブルクリックすると、ブラウザに操作の画面が開きます。
+署名のない exe なので、初めて開くと Windows が「PC が保護されました」と出すことがあります。「詳細情報」を押して「実行」を選ぶと開きます。
+
+自分でビルドするときは、下の「詳しい説明」の「自分でビルドする」を見てください。
 
 ## 操作の画面(GUI)
 
@@ -39,10 +40,10 @@ cargo build --release
 画面を使わずに、設定ファイルで走らせることもできます。
 
 ```sh
-target\release\robot-sim.exe run examples\course.txt
+robot-sim.exe run examples\course.txt
 ```
 
-サンプルのロボットがサンプルのコースを走り、記録 `examples\course_run.json` を書きます。設定ファイルは 1 行に `key = value` を 1 つ書きます。たとえば `examples` に次のファイルを置くと、階段を走ります(パスは設定ファイルの場所から数えます)。
+(展開したフォルダで実行します。) サンプルのロボットがサンプルのコースを走り、記録 `examples\course_run.json` を書きます。設定ファイルは 1 行に `key = value` を 1 つ書きます。たとえば `examples` に次のファイルを置くと、階段を走ります(パスは設定ファイルの場所から数えます)。
 
 ```
 robot   = ../robots/simple_crawler/simple_crawler.urdf
@@ -83,6 +84,19 @@ record  = run.json
 - `simple_crawler.urdf`: 拡張 URDF(部品を 1 つずつ書く、細かく作りたいとき)
 
 ## 詳しい説明
+
+<details>
+<summary>自分でビルドする</summary>
+
+[Rust](https://www.rust-lang.org/)(stable、MSVC)を入れて、このリポジトリで次を実行します。
+
+```sh
+cargo build --release
+```
+
+`target\release\robot-sim.exe` ができます。設定ファイルで走らせるときは `target\release\robot-sim.exe run examples\course.txt` のように実行します。
+
+</details>
 
 <details>
 <summary>コマンドの一覧</summary>

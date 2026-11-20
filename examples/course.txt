@@ -1,8 +1,9 @@
 # The sample crawler over the sample course (every kind of terrain), with fixed commands:
 # belts forward, front flippers raised 40 degrees, rear ones flat.
 #
-#   target\release\robot-sim.exe run examples\course.txt
+#   robot-sim.exe run examples\course.txt
 #
+# (Built from source, the exe is target\release\robot-sim.exe.)
 # Then open viewer/viewer.html in a browser and choose examples/course_run.json.
 
 robot    = ../robots/simple_crawler/simple_crawler.urdf
