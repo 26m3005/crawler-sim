@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "robot-sim"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "sim-core",
  "sim-task",
@@ -13,11 +13,11 @@ dependencies = [
 
 [[package]]
 name = "sim-core"
-version = "0.1.0"
+version = "0.1.1"
 
 [[package]]
 name = "sim-task"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "sim-core",
  "sim-urdf",
@@ -25,7 +25,7 @@ dependencies = [
 
 [[package]]
 name = "sim-urdf"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "sim-core",
 ]
