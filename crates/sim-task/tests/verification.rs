@@ -233,3 +233,16 @@ fn belts_on_a_side_run_together() {
         }
     }
 }
+
+/// The sample robot crosses the sample course with the sample commands (examples/course.txt:
+/// friction 0.8, belts 0.5 m/s, front flippers 40 degrees). The course is the first thing a new
+/// user runs, and the robot's path differs a little between operating systems (the last bits of
+/// the maths library), so CI runs this on Linux and Windows. "Crossed" is what `robot-sim run`
+/// shows: the end is reached without turning over; the fixed commands let it drift sideways.
+#[test]
+fn the_sample_course_is_crossed() {
+    let mut case = TraverseCase::new(TerrainSpec::Course { seed: 0 }, 0.8, 40.0);
+    case.seconds = 90.0;
+    let r = run(&crawler(), &case);
+    assert!(r.done.is_some() && r.rolled.is_none(), "stopped at x {:.2} m, y {:.2} m of {:.1} m (stuck {:?}, rolled {:?}, max tilt {:.0} deg)", r.final_x, r.final_y, case.terrain.goal_x(), r.stuck, r.rolled, r.max_tilt_deg);
+}

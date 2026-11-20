@@ -162,7 +162,7 @@ cargo test --release -p sim-task --test survey -- --ignored --nocapture     # �
 | `stairs` | `rise`(0.08)、`tread`(0.25)、`steps`(8)、`skew_deg`(0) | 階段。`skew_deg` で段の縁を斜めにすると、片方のクローラが先に当たる |
 | `slope` | `deg`(15) | 平らな地面から登る坂。長さ 3 m。登りきるとその高さの平らな地面が続く |
 | `side_slope` | `deg`(15) | 左半分(y > 0)だけ左へ登る横の坂。長さ 3 m。手前と奥の縁は段差になる |
-| `course` | `seed`(0) | rails、step、curb、holes、random、stairs、slope、side_slope を 1 m おきに並べたコース。だんだん登る |
+| `course` | `seed`(0) | rails、step、curb、side_slope、holes、random、stairs、slope を 1 m おきに並べたコース。だんだん登る |
 
 - 地形は x = 1.2 m から始まり、幅は 3.5 m(y = 0 が中心)。手前は高さ 0、奥と横は端の高さのまま平らに続きます。
 - 地形の終わりから 0.6 m 先を過ぎると、`run` は止まります。
