@@ -4,7 +4,7 @@ members = ["crates/sim-core", "crates/sim-urdf", "crates/sim-task", "crates/robo
 
 [workspace.package]
 edition = "2021"
-version = "0.1.0"
+version = "0.1.1"
 license = "MIT"
 
 # Small math functions live in sim-core and are called from other crates; without

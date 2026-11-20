@@ -10,7 +10,7 @@
 
 必要なもの: Windows 10 / 11(64 ビット)とブラウザ。ほかに入れるものはありません。
 
-1. [Releases](https://github.com/26m3005/crawler-sim/releases/latest) から `robot-sim-v0.1.0-windows-x64.zip` をダウンロードして、展開します。
+1. [Releases](https://github.com/26m3005/crawler-sim/releases/latest) から `robot-sim-v0.1.1-windows-x64.zip` をダウンロードして、展開します。
 2. 中の `robot-sim.exe` をダブルクリックすると、ブラウザに操作の画面が開きます。
 
 署名のない exe なので、初めて開くと Windows が「PC が保護されました」と出すことがあります。「詳細情報」を押して「実行」を選ぶと開きます。
