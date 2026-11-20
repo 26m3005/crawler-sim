@@ -96,6 +96,19 @@ cargo build --release
 
 `target\release\robot-sim.exe` ができます。設定ファイルで走らせるときは `target\release\robot-sim.exe run examples\course.txt` のように実行します。
 
+計算が正しいかのテスト(物理の確認、読み込み、地形など、数十秒):
+
+```sh
+cargo test --release
+```
+
+push とプルリクエストのたびに、GitHub の [Actions](https://github.com/26m3005/crawler-sim/actions) が Linux と Windows で同じテストを流します。時間のかかる調べもの(数分〜数十分)は、必要なときに手で流します。
+
+```sh
+cargo test --release -p sim-task --test baseline -- --ignored --nocapture   # フリッパーの角度ごとに越えられる段差の高さ
+cargo test --release -p sim-task --test survey -- --ignored --nocapture     # ランダムな段差を越える割合
+```
+
 </details>
 
 <details>
