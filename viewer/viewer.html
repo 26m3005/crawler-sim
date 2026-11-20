@@ -1,0 +1,301 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>robot-sim viewer</title>
+<!-- Plays a robot-sim recording (robot-sim run の record). Open this file in a browser and drop the JSON on
+     it. No libraries: plain WebGL. The format is in crates/sim-task/src/view.rs. -->
+<style>
+  html, body { margin: 0; height: 100%; font: 13px system-ui, sans-serif; background: #0f1722; color: #dde3ea; }
+  #bar { position: fixed; left: 0; right: 0; top: 0; display: flex; gap: 8px; align-items: center; padding: 6px 10px; background: rgba(22, 30, 42, .85); }
+  #bar input[type=range] { flex: 1; }
+  #time { min-width: 110px; text-align: right; font-variant-numeric: tabular-nums; }
+  canvas { display: block; width: 100%; height: 100%; }
+  #hint { position: fixed; left: 0; right: 0; top: 45%; text-align: center; color: #9fb3c8; pointer-events: none; }
+  #keys { position: fixed; left: 10px; bottom: 8px; color: #8a96a3; }
+</style>
+</head>
+<body>
+<div id="bar">
+  <input type="file" id="file" accept=".json">
+  <button id="play" disabled>再生</button>
+  <input type="range" id="seek" min="0" max="0" value="0" disabled>
+  <span id="time">-</span>
+  <select id="speed"><option>0.25</option><option>0.5</option><option selected>1</option><option>2</option><option>4</option></select>×
+</div>
+<canvas id="c"></canvas>
+<div id="hint">記録ファイル(JSON)をここにドロップするか、上のボタンで選ぶ</div>
+<div id="keys">ドラッグ: 回す ホイール: 寄る スペース: 再生と停止 ← →: 1 コマ</div>
+<script>
+"use strict";
+const canvas = document.getElementById("c");
+const gl = canvas.getContext("webgl", { antialias: true });
+
+// ---- Shaders: flat colour, lit from a fixed direction from both sides of each face.
+const VS = `attribute vec3 p; attribute vec3 n; uniform mat4 view, model; varying vec3 vn;
+  void main() { vn = mat3(model) * n; gl_Position = view * model * vec4(p, 1.0); }`;
+const FS = `precision mediump float; varying vec3 vn; uniform vec3 colour; uniform float ambient;
+  void main() { float d = abs(dot(normalize(vn), normalize(vec3(0.4, 0.3, 0.85))));
+    gl_FragColor = vec4(colour * (ambient + (1.0 - ambient) * d), 1.0); }`;
+function shader(type, src) {
+  const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s);
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw gl.getShaderInfoLog(s);
+  return s;
+}
+const prog = gl.createProgram();
+gl.attachShader(prog, shader(gl.VERTEX_SHADER, VS)); gl.attachShader(prog, shader(gl.FRAGMENT_SHADER, FS));
+gl.linkProgram(prog); gl.useProgram(prog);
+const loc = { p: gl.getAttribLocation(prog, "p"), n: gl.getAttribLocation(prog, "n"),
+  view: gl.getUniformLocation(prog, "view"), model: gl.getUniformLocation(prog, "model"), colour: gl.getUniformLocation(prog, "colour"), ambient: gl.getUniformLocation(prog, "ambient") };
+
+// ---- Small vector and matrix helpers (4x4 matrices column-major, as WebGL wants).
+const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+const norm = a => { const l = Math.hypot(...a) || 1; return [a[0] / l, a[1] / l, a[2] / l]; };
+function mul(a, b) {
+  const o = new Float32Array(16);
+  for (let c = 0; c < 4; c++) for (let r = 0; r < 4; r++) {
+    let s = 0; for (let k = 0; k < 4; k++) s += a[k * 4 + r] * b[c * 4 + k]; o[c * 4 + r] = s;
+  }
+  return o;
+}
+function perspective(fovy, aspect, near, far) {
+  const f = 1 / Math.tan(fovy / 2), d = near - far;
+  return new Float32Array([f / aspect, 0, 0, 0, 0, f, 0, 0, 0, 0, (far + near) / d, -1, 0, 0, 2 * far * near / d, 0]);
+}
+function lookAt(eye, at, up) {
+  const z = norm(sub(eye, at)), x = norm(cross(up, z)), y = cross(z, x);
+  const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+  return new Float32Array([x[0], y[0], z[0], 0, x[1], y[1], z[1], 0, x[2], y[2], z[2], 0, -dot(x, eye), -dot(y, eye), -dot(z, eye), 1]);
+}
+/** A body pose [x, y, z, r00 .. r22] (rotation rows) as a model matrix. */
+function poseMatrix(q) {
+  return new Float32Array([q[3], q[6], q[9], 0, q[4], q[7], q[10], 0, q[5], q[8], q[11], 0, q[0], q[1], q[2], 1]);
+}
+const IDENTITY = poseMatrix([0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1]);
+
+// ---- Meshes: triangle lists with one normal per triangle.
+class Mesh {
+  constructor() { this.p = []; this.n = []; }
+  tri(a, b, c) {
+    const n = norm(cross(sub(b, a), sub(c, a)));
+    for (const v of [a, b, c]) { this.p.push(...v); this.n.push(...n); }
+  }
+  poly(pts) { for (let i = 1; i + 1 < pts.length; i++) this.tri(pts[0], pts[i], pts[i + 1]); }
+  quad(a, b, c, d) { this.tri(a, b, c); this.tri(a, c, d); }
+  box(lo, hi) {
+    const v = i => [i & 1 ? hi[0] : lo[0], i & 2 ? hi[1] : lo[1], i & 4 ? hi[2] : lo[2]];
+    for (const f of [[0, 1, 3, 2], [4, 5, 7, 6], [0, 1, 5, 4], [2, 3, 7, 6], [0, 2, 6, 4], [1, 3, 7, 5]]) this.quad(...f.map(v));
+  }
+  /** A convex outline in x-z (points [x, z] in order) spread across y0..y1; caps unless open. */
+  extrude(outline, y0, y1, open) {
+    const at = (q, y) => [q[0], y, q[1]];
+    for (let i = 0; i < outline.length; i++) {
+      const a = outline[i], b = outline[(i + 1) % outline.length];
+      this.quad(at(a, y0), at(b, y0), at(b, y1), at(a, y1));
+    }
+    if (!open) { this.poly(outline.map(q => at(q, y0))); this.poly(outline.map(q => at(q, y1))); }
+  }
+  upload() {
+    this.count = this.p.length / 3;
+    this.bp = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, this.bp); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(this.p), gl.STATIC_DRAW);
+    this.bn = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, this.bn); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(this.n), gl.STATIC_DRAW);
+    this.p = this.n = null;
+    return this;
+  }
+  /** `ambient`: how bright a face is that the light does not reach (0..1). */
+  draw(model, colour, ambient = 0.5) {
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.bp); gl.vertexAttribPointer(loc.p, 3, gl.FLOAT, false, 0, 0);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.bn); gl.vertexAttribPointer(loc.n, 3, gl.FLOAT, false, 0, 0);
+    gl.uniformMatrix4fv(loc.model, false, model); gl.uniform3fv(loc.colour, colour); gl.uniform1f(loc.ambient, ambient);
+    gl.drawArrays(gl.TRIANGLES, 0, this.count);
+  }
+}
+gl.enableVertexAttribArray(loc.p); gl.enableVertexAttribArray(loc.n);
+
+/** The outline of a belt round pulleys a and b (centres [x, z]) of radius r: a stadium. */
+function stadium(a, b, r) {
+  const d = norm([b[0] - a[0], 0, b[1] - a[1]]), side = [-d[2], d[0]], seg = 16, out = [];
+  const arc = (c, from) => {
+    for (let i = 0; i <= seg; i++) {
+      const t = from + Math.PI * i / seg, u = [Math.cos(t), Math.sin(t)];
+      const dir = [d[0] * u[0] + side[0] * u[1], d[2] * u[0] + side[1] * u[1]];
+      out.push([c[0] + r * dir[0], c[1] + r * dir[1]]);
+    }
+  };
+  arc(b, -Math.PI / 2); arc(a, Math.PI / 2);
+  return out;
+}
+
+const colour = hex => [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16) / 255);
+/** What fills the inside of a belt: drawing only, so a flipper does not look hollow. */
+const FILL = colour("#f1f2f4"), FILL_INSET = 0.004;
+
+/** The meshes of one part, each with its colour; none for kinds this viewer does not draw. */
+function partMeshes(p) {
+  const m = new Mesh(), c = colour(p.c || "#cccccc");
+  switch (p.k) {
+    case "box": m.box(p.min, p.max); break;
+    case "plate": m.extrude(stadium(p.a, p.bb, p.r), p.y0, p.y1, false); break;
+    case "belt": {
+      m.extrude(stadium(p.a, p.bb, p.r), p.y0, p.y1, true);
+      const fill = new Mesh();
+      fill.extrude(stadium(p.a, p.bb, p.r - FILL_INSET), p.y0, p.y1, false);
+      return [{ mesh: m.upload(), colour: c }, { mesh: fill.upload(), colour: FILL }];
+    }
+    case "prism": m.extrude(p.pts, p.y0, p.y1, false); break;
+    case "hull8": {
+      const v = p.v;
+      for (const f of [[0, 1, 2, 3], [4, 5, 6, 7], [0, 1, 5, 4], [1, 2, 6, 5], [2, 3, 7, 6], [3, 0, 4, 7]]) m.quad(...f.map(i => v[i]));
+      break;
+    }
+    default: return [];
+  }
+  return [{ mesh: m.upload(), colour: c }];
+}
+
+/** A column from the ground up to a top whose corners are at z00 (x0, y0), z10, z11, z01. */
+function column(m, x0, y0, x1, y1, z00, z10, z11, z01) {
+  const v = [[x0, y0, 0], [x1, y0, 0], [x1, y1, 0], [x0, y1, 0], [x0, y0, z00], [x1, y0, z10], [x1, y1, z11], [x0, y1, z01]];
+  for (const f of [[0, 1, 2, 3], [4, 5, 6, 7], [0, 1, 5, 4], [1, 2, 6, 5], [2, 3, 7, 6], [3, 0, 4, 7]]) m.quad(...f.map(i => v[i]));
+}
+
+/** The terrain: columns (their tops level, or sloping by `grades`), their rows continued
+ * sideways, the ground, and the height past the far end. */
+function terrainMesh(t) {
+  const blocks = new Mesh(), ground = new Mesh(), far = 60;
+  ground.box([-far, -far, -0.01], [far, far, 0]);
+  if (t) {
+    const half = t.ny * t.cell / 2, xEnd = t.origin_x + t.nx * t.cell, c = t.cell;
+    // Height of cell k's top at (dx, dy) from its centre.
+    const at = (k, dx, dy) => t.heights[k] + (t.grades ? t.grades[2 * k] * dx + t.grades[2 * k + 1] * dy : 0);
+    const show = (...z) => Math.max(...z) > 0.0005;
+    for (let i = 0; i < t.nx; i++) {
+      const x0 = t.origin_x + i * c, x1 = x0 + c;
+      for (let j = 0; j < t.ny; j++) {
+        const k = i * t.ny + j, y0 = -half + j * c, z = [at(k, -c / 2, -c / 2), at(k, c / 2, -c / 2), at(k, c / 2, c / 2), at(k, -c / 2, c / 2)];
+        if (show(...z)) column(blocks, x0, y0, x1, y0 + c, ...z);
+      }
+      // Past the sides: level across y at the height of the outer edge.
+      const r = i * t.ny, l = i * t.ny + t.ny - 1;
+      const right = [at(r, -c / 2, -c / 2), at(r, c / 2, -c / 2)], left = [at(l, -c / 2, c / 2), at(l, c / 2, c / 2)];
+      if (show(...right)) column(blocks, x0, -far, x1, -half, right[0], right[1], right[1], right[0]);
+      if (show(...left)) column(blocks, x0, half, x1, far, left[0], left[1], left[1], left[0]);
+    }
+    if (t.end > 0.0005) blocks.box([xEnd, -far, 0], [xEnd + far, far, t.end]);
+  }
+  return { blocks: blocks.upload(), ground: ground.upload() };
+}
+
+// ---- The look besides the robot (its colours come from the recording): a near-black ground with
+// blue-grey blocks on it, under a night sky. A step's sides are darker than its top, so steps show.
+const SKY = colour("#0f1722"), GROUND = colour("#101318"), BLOCKS = colour("#5d6878"), TERRAIN_AMBIENT = 0.45;
+
+
+// ---- The recording and playback.
+let rec = null, parts = [], terrain = null, frame = 0, playing = false, clock = 0, last = 0;
+const cam = { az: -2.3, el: 0.45, dist: 2.2, target: [0, 0, 0] };
+const seek = document.getElementById("seek"), playBtn = document.getElementById("play"), timeLbl = document.getElementById("time");
+
+function load(text) {
+  const r = JSON.parse(text);
+  if (!r.scene || !Array.isArray(r.frames) || !r.frames.length) throw new Error("robot-sim の記録ではない(scene と frames がない)");
+  rec = r;
+  parts = r.scene.parts.flatMap(p => partMeshes(p).map(m => ({ b: p.b, ...m })));
+  terrain = terrainMesh(r.scene.terrain);
+  frame = 0; clock = r.frames[0].t; playing = true;
+  seek.max = r.frames.length - 1; seek.disabled = playBtn.disabled = false;
+  const b0 = r.frames[0].b[r.scene.follow || 0];
+  cam.target = [b0[0], b0[1], b0[2]];
+  document.getElementById("hint").style.display = "none";
+  update();
+}
+function openFile(f) {
+  f.text().then(load).catch(e => alert("読めなかった: " + e.message));
+}
+// Inside robot-sim's GUI (robot-sim.exe with no arguments), the page around this one sends recordings as
+// text, and while the robot is driven by hand, new frames ({frames: [...]}) to show as they come.
+let live = false;
+addEventListener("message", e => {
+  if (parent === window || e.source !== parent) return;
+  if (typeof e.data === "string") {
+    live = false;
+    try { load(e.data); } catch (err) { alert("読めなかった: " + err.message); }
+  } else if (rec && e.data && Array.isArray(e.data.frames) && e.data.frames.length) {
+    live = true;
+    rec.frames.push(...e.data.frames);
+    frame = rec.frames.length - 1; clock = rec.frames[frame].t; playing = false;
+    seek.max = frame; update();
+  }
+});
+// Keys go to the GUI too, so the robot can be driven while this view has the focus.
+if (parent !== window) {
+  for (const type of ["keydown", "keyup"]) addEventListener(type, e => {
+    if (!e.target.closest?.("select, input")) parent.postMessage({ key: e.key, down: type === "keydown" }, location.origin);
+  });
+}
+function update() {
+  seek.value = frame;
+  playBtn.textContent = playing ? "停止" : "再生";
+  const f = rec.frames[frame];
+  timeLbl.textContent = `${f.t.toFixed(2)} / ${rec.frames[rec.frames.length - 1].t.toFixed(2)} s`;
+}
+function frameAt(t) {
+  let lo = 0, hi = rec.frames.length - 1;
+  while (lo < hi) { const m = (lo + hi + 1) >> 1; if (rec.frames[m].t <= t) lo = m; else hi = m - 1; }
+  return lo;
+}
+
+function draw(now) {
+  const dt = Math.min(0.1, (now - last) / 1000); last = now;
+  const w = canvas.clientWidth * devicePixelRatio, h = canvas.clientHeight * devicePixelRatio;
+  if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+  gl.viewport(0, 0, w, h);
+  gl.clearColor(...SKY, 1); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT); gl.enable(gl.DEPTH_TEST);
+  if (rec) {
+    if (playing) {
+      clock += dt * Number(document.getElementById("speed").value);
+      const endT = rec.frames[rec.frames.length - 1].t;
+      if (clock > endT) clock = rec.frames[0].t;
+      frame = frameAt(clock); update();
+    }
+    const poses = rec.frames[frame].b, f = poses[rec.scene.follow || 0];
+    for (let i = 0; i < 3; i++) cam.target[i] += (f[i] - cam.target[i]) * Math.min(1, dt * 4);
+    const eye = [cam.target[0] + cam.dist * Math.cos(cam.el) * Math.cos(cam.az), cam.target[1] + cam.dist * Math.cos(cam.el) * Math.sin(cam.az), cam.target[2] + cam.dist * Math.sin(cam.el)];
+    gl.uniformMatrix4fv(loc.view, false, mul(perspective(0.8, w / h, 0.02, 200), lookAt(eye, cam.target, [0, 0, 1])));
+    terrain.ground.draw(IDENTITY, GROUND, TERRAIN_AMBIENT);
+    terrain.blocks.draw(IDENTITY, BLOCKS, TERRAIN_AMBIENT);
+    const models = poses.map(poseMatrix);
+    for (const p of parts) p.mesh.draw(models[p.b], p.colour);
+  }
+  requestAnimationFrame(draw);
+}
+requestAnimationFrame(draw);
+
+// ---- Input.
+document.getElementById("file").onchange = e => e.target.files[0] && openFile(e.target.files[0]);
+addEventListener("dragover", e => e.preventDefault());
+addEventListener("drop", e => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) openFile(f); });
+playBtn.onclick = () => { playing = !playing; update(); };
+seek.oninput = () => { frame = Number(seek.value); clock = rec.frames[frame].t; playing = false; update(); };
+addEventListener("keydown", e => {
+  if (!rec || live || e.target.closest?.("select, input")) return;   // the keys belong to the control in use, or to driving
+  if (e.key === " ") { playing = !playing; e.preventDefault(); }
+  else if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
+    playing = false; frame = Math.max(0, Math.min(rec.frames.length - 1, frame + (e.key === "ArrowRight" ? 1 : -1))); clock = rec.frames[frame].t;
+  } else return;
+  update();
+});
+let drag = null;
+canvas.onpointerdown = e => { drag = [e.clientX, e.clientY]; canvas.setPointerCapture(e.pointerId); };
+canvas.onpointerup = () => { drag = null; };
+canvas.onpointermove = e => {
+  if (!drag) return;
+  cam.az -= (e.clientX - drag[0]) * 0.008; cam.el = Math.max(-0.1, Math.min(1.5, cam.el + (e.clientY - drag[1]) * 0.008));
+  drag = [e.clientX, e.clientY];
+};
+canvas.onwheel = e => { cam.dist = Math.max(0.3, Math.min(30, cam.dist * Math.exp(e.deltaY * 0.001))); e.preventDefault(); };
+</script>
+</body>
+</html>

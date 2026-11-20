@@ -1,0 +1,21 @@
+[workspace]
+resolver = "2"
+members = ["crates/sim-core", "crates/sim-urdf", "crates/sim-task", "crates/robot-sim"]
+
+[workspace.package]
+edition = "2021"
+version = "0.1.0"
+license = "MIT"
+
+# Small math functions live in sim-core and are called from other crates; without
+# link-time optimisation they are not inlined and the physics runs about 30% slower.
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+
+# The physics is too slow to test unoptimised.
+[profile.test]
+opt-level = 3
+lto = "fat"
+codegen-units = 1

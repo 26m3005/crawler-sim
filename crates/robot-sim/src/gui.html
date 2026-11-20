@@ -1,0 +1,327 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>robot-sim</title>
+<!-- The GUI of robot-sim.exe (crates/robot-sim/src/gui.rs serves it). No libraries. -->
+<style>
+  :root { --bg: #0f1722; --panel: #161e2a; --line: #2a3546; --text: #dde3ea; --dim: #8a96a3; --accent: #5aa0e6; --bad: #e66a5a; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font: 13px system-ui, sans-serif; }
+  body { display: flex; }
+  #side { width: 360px; flex: none; overflow-y: auto; background: var(--panel); border-right: 1px solid var(--line); padding: 10px 12px 40px; box-sizing: border-box; }
+  #view { flex: 1; border: 0; height: 100%; }
+  h1 { font-size: 16px; margin: 4px 0 10px; display: flex; justify-content: space-between; align-items: center; }
+  h2 { font-size: 13px; margin: 16px 0 6px; color: var(--accent); border-bottom: 1px solid var(--line); padding-bottom: 3px; }
+  h3 { font-size: 12px; margin: 10px 0 4px; color: var(--dim); font-weight: normal; }
+  label { display: grid; grid-template-columns: 1fr 130px; gap: 6px; align-items: center; margin: 3px 0; }
+  label span { color: var(--dim); overflow-wrap: anywhere; }
+  input, select, button { font: inherit; color: var(--text); background: #0f1520; border: 1px solid var(--line); border-radius: 4px; padding: 3px 6px; }
+  input:disabled { color: var(--dim); }
+  button { cursor: pointer; background: #1f2b3b; }
+  button:hover:not(:disabled) { border-color: var(--accent); }
+  button:disabled { color: var(--dim); cursor: default; }
+  button.main { background: #24507d; border-color: #3a6fa5; padding: 5px 14px; }
+  .row { display: flex; gap: 6px; flex-wrap: wrap; margin: 6px 0; }
+  .msg { margin: 6px 0; color: var(--dim); white-space: pre-wrap; overflow-wrap: anywhere; }
+  .msg.bad { color: var(--bad); }
+  progress { width: 100%; }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+<div id="side">
+  <h1>robot-sim <button id="quit" title="robot-sim を終わる">終了</button></h1>
+
+  <h2>ロボット</h2>
+  <div class="row">
+    <button id="sample">サンプルに戻す</button>
+    <button id="open">ファイルを開く</button>
+    <button id="save">パラメータを保存</button>
+    <input type="file" id="file" accept=".txt,.urdf" class="hidden">
+  </div>
+  <div id="robotMsg" class="msg"></div>
+  <div id="params"></div>
+
+  <h2>地形</h2>
+  <label><span>種類</span><select id="terrain"></select></label>
+  <div id="terrainKeys"></div>
+  <label><span>摩擦係数</span><input id="friction" value="0.8"></label>
+
+  <h2>走らせ方</h2>
+  <label><span>左のベルト [m/s]</span><input id="beltL" value="0.5"></label>
+  <label><span>右のベルト [m/s]</span><input id="beltR" value="0.5"></label>
+  <div id="joints"></div>
+  <label><span>最長の時間 [s]</span><input id="seconds" value="90"></label>
+  <label><span>指令の間隔 [s]</span><input id="dt" value="0.05"></label>
+
+  <h2>実行</h2>
+  <div class="row">
+    <button id="run" class="main">走らせる</button>
+    <button id="stop" disabled>止める</button>
+    <button id="saveRec" disabled>記録を保存</button>
+  </div>
+  <progress id="bar" max="1" value="0"></progress>
+  <div id="runMsg" class="msg">右の画面は、ロボットが地形の始まりに立った様子。値を変えるとすぐに変わる。</div>
+
+  <h2>手で操縦する(テレオペ)</h2>
+  <div class="row">
+    <button id="drive" class="main">操縦を始める</button>
+    <button id="undrive" disabled>やめる</button>
+    <button id="saveDrive" disabled>記録を保存</button>
+  </div>
+  <label><span>ベルトの速さ [m/s]</span><input id="driveSpeed" value="0.5"></label>
+  <label><span>フリッパーを動かす速さ [度/s]</span><input id="flipRate" value="60"></label>
+  <div id="driveMsg" class="msg">W S(↑ ↓): 前、後ろ A D(← →): 左、右に回る
+R F: 前のフリッパーを上げる、下げる T G: 後ろのフリッパーを上げる、下げる
+実時間で動く。最長の時間(走らせ方)で止まる。地形とロボットは今の値で始める。</div>
+</div>
+<iframe id="view" title="ビューア"></iframe>
+<script>
+"use strict";
+const token = new URLSearchParams(location.search).get("t");
+const $ = id => document.getElementById(id);
+const view = $("view");
+view.src = "viewer.html?t=" + token;
+
+async function api(path, body) {
+  const r = await fetch(path, { method: body === undefined ? "GET" : "POST", headers: { "X-Token": token }, body });
+  const text = await r.text();
+  if (!r.ok) throw new Error(text);
+  return text;
+}
+function show(json) { view.contentWindow.postMessage(json, location.origin); }
+function message(el, text, bad) { el.textContent = text; el.classList.toggle("bad", !!bad); }
+function download(name, text) {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([text], { type: "application/octet-stream" }));
+  a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+function field(parent, label, id, value, onchange) {
+  const l = document.createElement("label");
+  l.innerHTML = "<span></span>";
+  l.firstChild.textContent = label;
+  const i = document.createElement("input");
+  i.id = id; i.value = value; i.addEventListener("input", onchange);
+  l.append(i); parent.append(l);
+  return i;
+}
+// Waits until typing pauses; each job (sending the robot, the preview) has its own wait.
+const timers = new Map();
+function later(f) { clearTimeout(timers.get(f)); timers.set(f, setTimeout(f, 350)); }
+
+// ---- The robot: a form made from the sample's parameter file, or a file opened as it is.
+const SHAPES = ["rect", "trapezoid", "ramp"];
+let robotFile = null;            // { kind: "urdf" | "params", name, text } when a file is used as it is
+let info = null;                 // the robot's joints, from the server
+
+function buildForm(text) {
+  const box = $("params");
+  box.innerHTML = "";
+  let comment = "";
+  for (const raw of text.split("\n")) {
+    const line = raw.trim();
+    if (line.startsWith("#")) { comment = line.slice(1).trim(); continue; }
+    const m = line.split("#")[0].match(/^(\w+)\s*=\s*(.+)$/);
+    if (!m) { if (!line) comment = ""; continue; }
+    if (comment) {
+      const h = document.createElement("h3"); h.textContent = comment.replace(/:.*$/, ""); box.append(h); comment = "";
+    }
+    const [, key, value] = m;
+    if (key.endsWith("_lug_shape")) {
+      const part = key.replace("_lug_shape", "");
+      const l = document.createElement("label");
+      l.innerHTML = `<span>${key}</span><select data-key="${key}">${SHAPES.map(s => `<option>${s}</option>`).join("")}</select>`;
+      box.append(l);
+      const sel = l.querySelector("select"); sel.value = value.trim();
+      const top = field(box, part + "_lug_top", "", "0.012", robotChanged); top.dataset.key = part + "_lug_top";
+      const ramp = field(box, part + "_lug_ramp", "", "0.1, 0.005", robotChanged); ramp.dataset.key = part + "_lug_ramp";
+      const toggle = () => { top.parentNode.classList.toggle("hidden", sel.value !== "trapezoid"); ramp.parentNode.classList.toggle("hidden", sel.value !== "ramp"); };
+      sel.addEventListener("change", () => { toggle(); robotChanged(); });
+      toggle();
+      continue;
+    }
+    const i = field(box, key, "", value.trim(), robotChanged);
+    i.dataset.key = key;
+  }
+}
+function paramsText() {
+  return [...$("params").querySelectorAll("[data-key]")]
+    .filter(e => !e.parentNode.classList.contains("hidden"))
+    .map(e => `${e.dataset.key} = ${e.value}`).join("\n") + "\n";
+}
+// Values from a parameter file that was opened: into the form, with any key the form lacks shown as an error by the server.
+function fillForm(text) {
+  for (const raw of text.split("\n")) {
+    const m = raw.split("#")[0].trim().match(/^(\w+)\s*=\s*(.+)$/);
+    const e = m && $("params").querySelector(`[data-key="${m[1]}"]`);
+    if (e) { e.value = m[2].trim(); e.dispatchEvent(new Event("change")); }
+  }
+}
+function robotChanged() { later(sendRobot); }
+async function sendRobot() {
+  const [kind, text] = robotFile && robotFile.kind === "urdf" ? ["urdf", robotFile.text] : ["params", paramsText()];
+  try {
+    info = JSON.parse(await api("/api/robot", kind + "\n" + text));
+    message($("robotMsg"), `${info.name}: ${info.mass} kg、関節 ${info.joints.length}、ベルト ${info.tracks.length}` + (robotFile ? `(${robotFile.name})` : ""));
+    buildJoints();
+    preview();
+  } catch (e) { message($("robotMsg"), e.message, true); }
+}
+$("sample").onclick = async () => { robotFile = null; $("params").classList.remove("hidden"); buildForm(await api("/api/sample")); sendRobot(); };
+$("open").onclick = () => $("file").click();
+$("file").onchange = async () => {
+  const f = $("file").files[0]; if (!f) return;
+  const text = await f.text();
+  $("file").value = "";
+  if (f.name.toLowerCase().endsWith(".urdf")) {
+    robotFile = { kind: "urdf", name: f.name, text };
+    $("params").classList.add("hidden");
+  } else {
+    robotFile = null;
+    $("params").classList.remove("hidden");
+    buildForm(await api("/api/sample"));
+    fillForm(text);
+  }
+  sendRobot();
+};
+$("save").onclick = () => {
+  if (robotFile) return alert("URDF のロボットは、開いたファイルのまま使っている(パラメータの形式ではない)");
+  const name = ($("params").querySelector('[data-key="name"]') || {}).value || "robot";
+  download(name + ".txt", paramsText());
+};
+
+// ---- The terrain: a kind and its keys (README, 地形).
+const TERRAINS = {
+  course: ["サンプルのコース", { seed: 0 }], flat: ["平ら", {}], step: ["段差", { h: 0.1 }], curb: ["片側の段差", { h: 0.1 }],
+  rails: ["レール", { h: 0.05, every: 5 }], holes: ["穴の市松模様", { h: 0.1, cell: 0.25 }], random: ["ランダムなブロック", { cell: 0.25, hmax: 0.2, seed: 0 }],
+  stairs: ["階段", { rise: 0.08, tread: 0.25, steps: 8, skew_deg: 0 }], slope: ["坂", { deg: 15 }], side_slope: ["横の坂(左半分)", { deg: 15 }],
+};
+for (const [k, [name]] of Object.entries(TERRAINS)) $("terrain").add(new Option(name, k));
+function buildTerrainKeys() {
+  const box = $("terrainKeys"); box.innerHTML = "";
+  for (const [k, v] of Object.entries(TERRAINS[$("terrain").value][1])) field(box, k, "t_" + k, v, () => later(preview));
+}
+$("terrain").onchange = () => { buildTerrainKeys(); preview(); };
+function terrainText() {
+  const kind = $("terrain").value;
+  return [kind, ...Object.keys(TERRAINS[kind][1]).map(k => `${k}=${$("t_" + k).value.trim()}`)].join(" ");
+}
+
+// ---- How to drive.
+function buildJoints() {
+  const box = $("joints");
+  const old = Object.fromEntries([...box.querySelectorAll("input")].map(i => [i.dataset.name, i.value]));
+  box.innerHTML = "";
+  for (const j of info.joints) {
+    const i = field(box, `${j.name} [度]`, "", old[j.name] ?? (j.name.startsWith("front") ? 40 : 0), () => later(preview));
+    i.dataset.name = j.name;
+  }
+}
+function settingsText() {
+  const joints = [...$("joints").querySelectorAll("input")].map(i => i.value.trim()).join(", ");
+  return `terrain = ${terrainText()}\nfriction = ${$("friction").value}\nseconds = ${$("seconds").value}\n` +
+    `belt = ${$("beltL").value}, ${$("beltR").value}\njoints = ${joints}\ncontrol_dt = ${$("dt").value}\n`;
+}
+for (const id of ["friction", "seconds", "dt", "beltL", "beltR"]) $(id).addEventListener("input", () => later(preview));
+async function preview() {
+  if (running || driving) return;
+  try { show(await api("/api/preview", settingsText())); message($("runMsg"), "右の画面は、ロボットが地形の始まりに立った様子。値を変えるとすぐに変わる。"); }
+  catch (e) { message($("runMsg"), e.message, true); }
+}
+
+// ---- Running.
+let running = false, recording = null;
+function setRunning(on) { running = on; $("run").disabled = on; $("stop").disabled = !on; }
+$("run").onclick = async () => {
+  try { await api("/api/run", settingsText()); } catch (e) { return message($("runMsg"), e.message, true); }
+  setRunning(true); $("saveRec").disabled = true; recording = null;
+  message($("runMsg"), "計算中…");
+  poll();
+};
+$("stop").onclick = () => api("/api/stop", "").catch(() => {});
+async function poll() {
+  const s = JSON.parse(await api("/api/status"));
+  $("bar").value = s.goal > 0 ? Math.min(1, Math.max(0, s.x / s.goal)) : 0;
+  if (s.running) { message($("runMsg"), `計算中… t ${s.time.toFixed(1)} s、x ${s.x.toFixed(2)} / ${s.goal.toFixed(1)} m`); return setTimeout(poll, 300); }
+  setRunning(false);
+  if (s.error) return message($("runMsg"), s.error, true);
+  message($("runMsg"), s.summary + "\n右の画面で再生している。");
+  recording = await api("/api/result");
+  show(recording);
+  $("saveRec").disabled = false;
+}
+$("saveRec").onclick = () => recording && download("run.json", recording);
+$("quit").onclick = async () => {
+  if (!confirm("robot-sim を終わりますか?")) return;
+  await api("/api/quit", "").catch(() => {});
+  document.body.innerHTML = '<p style="margin:2em">robot-sim を終わった。このタブは閉じてよい。</p>';
+};
+
+// ---- Driving by hand: keys held → belt speeds and joint targets, sent every tick; new frames come back.
+const held = new Set();
+let driving = false, next = 1;
+const KEYS = { w: "fwd", arrowup: "fwd", s: "back", arrowdown: "back", a: "left", arrowleft: "left", d: "right", arrowright: "right",
+  r: "frontUp", f: "frontDown", t: "rearUp", g: "rearDown" };
+function key(k, down) {
+  const what = KEYS[k.toLowerCase()];
+  if (!driving || !what) return false;
+  if (down) held.add(what); else held.delete(what);
+  return true;
+}
+addEventListener("keydown", e => { if (!e.target.closest?.("input, select") && key(e.key, true)) e.preventDefault(); });
+addEventListener("keyup", e => key(e.key, false));
+addEventListener("message", e => { if (e.source === view.contentWindow && e.data && e.data.key) key(e.data.key, e.data.down); });
+addEventListener("blur", () => held.clear());
+
+$("drive").onclick = async () => {
+  try {
+    await preview();
+    await api("/api/teleop/start", settingsText());
+  } catch (e) { return message($("driveMsg"), e.message, true); }
+  driving = true; next = 1; held.clear();
+  $("drive").disabled = $("run").disabled = true; $("undrive").disabled = false; $("saveDrive").disabled = true;
+  document.activeElement.blur();
+  tick(performance.now());
+};
+$("undrive").onclick = () => api("/api/teleop/stop", "").catch(() => {});
+$("saveDrive").onclick = async () => download("drive.json", await api("/api/teleop/recording"));
+
+async function tick(before) {
+  const now = performance.now(), dt = Math.min(0.2, (now - before) / 1000);
+  const on = k => held.has(k) ? 1 : 0;
+  const v = Number($("driveSpeed").value) || 0, rate = Number($("flipRate").value) || 0;
+  const fwd = on("fwd") - on("back"), turn = on("right") - on("left");
+  const clamp = x => Math.max(-1, Math.min(1, x));
+  const belt = [v * clamp(fwd + turn), v * clamp(fwd - turn)];
+  // Joint targets move while their key is held, within the joint's range; the form shows them.
+  info.joints.forEach((j, n) => {
+    const input = $("joints").querySelectorAll("input")[n];
+    const dir = j.name.startsWith("front") ? on("frontUp") - on("frontDown") : on("rearUp") - on("rearDown");
+    const deg = (Number(input.value) || 0) + dir * rate * dt;
+    input.value = Math.max(j.lower * 180 / Math.PI, Math.min(j.upper * 180 / Math.PI, deg)).toFixed(1);
+  });
+  const joints = [...$("joints").querySelectorAll("input")].map(i => i.value);
+  try {
+    await api("/api/teleop/command", [...belt, ...joints].join(" "));
+    const s = JSON.parse(await api("/api/teleop/frames?from=" + next));
+    next = s.next;
+    if (s.frames.length) view.contentWindow.postMessage({ frames: s.frames }, location.origin);
+    $("bar").value = s.goal > 0 ? Math.min(1, Math.max(0, s.x / s.goal)) : 0;
+    const through = s.x > s.goal ? "、通り抜けた" : "";
+    message($("driveMsg"), `t ${s.t.toFixed(1)} s、x ${s.x.toFixed(2)} / ${s.goal.toFixed(1)} m、高さ ${s.z.toFixed(2)} m、傾き ${s.tilt_deg.toFixed(0)} 度${through}\nベルト ${belt.map(b => b.toFixed(2)).join(" / ")} m/s`, s.tilt_deg > 60);
+    if (s.running) return setTimeout(() => tick(now), 50);
+    if (s.error) message($("driveMsg"), s.error, true);
+  } catch (e) { message($("driveMsg"), e.message, true); }
+  driving = false; held.clear();
+  $("drive").disabled = $("run").disabled = false; $("undrive").disabled = true; $("saveDrive").disabled = false;
+  $("driveMsg").textContent += "\n操縦を終えた。右の画面で、操縦した記録を再生できる。";
+  api("/api/teleop/recording").then(show).catch(() => {});   // played back as a recording from here on
+}
+
+// ---- Start: the sample robot on the sample course, once the viewer is ready.
+buildTerrainKeys();
+view.addEventListener("load", () => $("sample").onclick(), { once: true });
+</script>
+</body>
+</html>

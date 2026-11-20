@@ -1,0 +1,114 @@
+<?xml version="1.0"?>
+<!--
+  simple_crawler: an example crawler with four flippers for robot-sim, extended URDF (README.md, "ロボットの書き方").
+  Every size and mass is made up for the example; it is not a real robot.
+
+  Frame: base_link at the middle of the main axles, x forward, y left, z up. Units: m, kg, s, rad.
+  Mass: 20 kg in all (chassis 16 kg, flippers 1 kg each).
+  Drive: one motor per side turns the main belt and both flipper belts of that side;
+  four servos set the flipper angles (positive raises the tips).
+-->
+<robot name="simple_crawler">
+  <link name="base_link">
+    <inertial>
+      <origin xyz="0 0 0"/>
+      <mass value="16"/>
+      <inertia ixx="0.17" iyy="0.45" izz="0.55" ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+  </link>
+  <link name="flipper_front_left">
+    <inertial><origin xyz="0.12 0.165 0"/><mass value="1"/><inertia ixx="0.001" iyy="0.006" izz="0.006" ixy="0" ixz="0" iyz="0"/></inertial>
+  </link>
+  <link name="flipper_rear_left">
+    <inertial><origin xyz="-0.12 0.165 0"/><mass value="1"/><inertia ixx="0.001" iyy="0.006" izz="0.006" ixy="0" ixz="0" iyz="0"/></inertial>
+  </link>
+  <link name="flipper_front_right">
+    <inertial><origin xyz="0.12 -0.165 0"/><mass value="1"/><inertia ixx="0.001" iyy="0.006" izz="0.006" ixy="0" ixz="0" iyz="0"/></inertial>
+  </link>
+  <link name="flipper_rear_right">
+    <inertial><origin xyz="-0.12 -0.165 0"/><mass value="1"/><inertia ixx="0.001" iyy="0.006" izz="0.006" ixy="0" ixz="0" iyz="0"/></inertial>
+  </link>
+  <joint name="front_left" type="revolute">
+    <parent link="base_link"/><child link="flipper_front_left"/>
+    <origin xyz="0.25 0 0"/><axis xyz="0 -1 0"/>
+    <limit lower="-1.57" upper="1.57" velocity="1.5" effort="60"/>
+  </joint>
+  <joint name="rear_left" type="revolute">
+    <parent link="base_link"/><child link="flipper_rear_left"/>
+    <origin xyz="-0.25 0 0"/><axis xyz="0 1 0"/>
+    <limit lower="-1.57" upper="1.57" velocity="1.5" effort="60"/>
+  </joint>
+  <joint name="front_right" type="revolute">
+    <parent link="base_link"/><child link="flipper_front_right"/>
+    <origin xyz="0.25 0 0"/><axis xyz="0 -1 0"/>
+    <limit lower="-1.57" upper="1.57" velocity="1.5" effort="60"/>
+  </joint>
+  <joint name="rear_right" type="revolute">
+    <parent link="base_link"/><child link="flipper_rear_right"/>
+    <origin xyz="-0.25 0 0"/><axis xyz="0 1 0"/>
+    <limit lower="-1.57" upper="1.57" velocity="1.5" effort="60"/>
+  </joint>
+  <servo joint="front_left" gain="4"/>
+  <servo joint="rear_left" gain="4"/>
+  <servo joint="front_right" gain="4"/>
+  <servo joint="rear_right" gain="4"/>
+  <surface link="base_link" friction="0.3"/>
+
+  <!-- Main tracks: pulleys 0.5 m apart, belts 0.10 m wide, 16 lugs 15 mm high. -->
+  <track name="left_main" side="left" link="base_link">
+    <pulley xyz="-0.25 0 0" radius="0.06"/>
+    <pulley xyz="0.25 0 0" radius="0.06"/>
+    <belt inner="0.04" outer="0.14" mass="1.0"/>
+    <lugs count="16" spacing="even" inner="0.04" outer="0.14">
+      <profile points="-0.015 0  0.015 0  0.015 0.015  -0.015 0.015"/>
+    </lugs>
+  </track>
+  <track name="right_main" side="right" link="base_link">
+    <pulley xyz="-0.25 0 0" radius="0.06"/>
+    <pulley xyz="0.25 0 0" radius="0.06"/>
+    <belt inner="0.04" outer="0.14" mass="1.0"/>
+    <lugs count="16" spacing="even" inner="0.04" outer="0.14">
+      <profile points="-0.015 0  0.015 0  0.015 0.015  -0.015 0.015"/>
+    </lugs>
+  </track>
+  <!-- Flipper tracks, outside the main tracks: 0.24 m long, 0.04 m wide, 10 lugs. -->
+  <track name="left_front_flipper" side="left" link="flipper_front_left">
+    <pulley xyz="0 0 0" radius="0.06"/>
+    <pulley xyz="0.24 0 0" radius="0.06"/>
+    <belt inner="0.145" outer="0.185" mass="0.5"/>
+    <lugs count="10" spacing="even" inner="0.145" outer="0.185">
+      <profile points="-0.015 0  0.015 0  0.015 0.015  -0.015 0.015"/>
+    </lugs>
+  </track>
+  <track name="left_rear_flipper" side="left" link="flipper_rear_left">
+    <pulley xyz="0 0 0" radius="0.06"/>
+    <pulley xyz="-0.24 0 0" radius="0.06"/>
+    <belt inner="0.145" outer="0.185" mass="0.5"/>
+    <lugs count="10" spacing="even" inner="0.145" outer="0.185">
+      <profile points="-0.015 0  0.015 0  0.015 0.015  -0.015 0.015"/>
+    </lugs>
+  </track>
+  <track name="right_front_flipper" side="right" link="flipper_front_right">
+    <pulley xyz="0 0 0" radius="0.06"/>
+    <pulley xyz="0.24 0 0" radius="0.06"/>
+    <belt inner="0.145" outer="0.185" mass="0.5"/>
+    <lugs count="10" spacing="even" inner="0.145" outer="0.185">
+      <profile points="-0.015 0  0.015 0  0.015 0.015  -0.015 0.015"/>
+    </lugs>
+  </track>
+  <track name="right_rear_flipper" side="right" link="flipper_rear_right">
+    <pulley xyz="0 0 0" radius="0.06"/>
+    <pulley xyz="-0.24 0 0" radius="0.06"/>
+    <belt inner="0.145" outer="0.185" mass="0.5"/>
+    <lugs count="10" spacing="even" inner="0.145" outer="0.185">
+      <profile points="-0.015 0  0.015 0  0.015 0.015  -0.015 0.015"/>
+    </lugs>
+  </track>
+  <drive name="left" max_torque="30" tracks="left_main left_front_flipper left_rear_flipper"/>
+  <drive name="right" max_torque="30" tracks="right_main right_front_flipper right_rear_flipper"/>
+
+  <!-- The chassis between the main tracks, and its sides between the main and flipper belts. -->
+  <plate track="left_main" y="-0.04 0.04" inset="0.005"/>
+  <plate track="left_main" y="0.14 0.145" inset="0.005"/>
+  <plate track="right_main" y="-0.145 -0.14" inset="0.005"/>
+</robot>

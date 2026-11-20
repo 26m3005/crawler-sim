@@ -1,0 +1,11 @@
+[package]
+name = "robot-sim"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+# robot-sim.exe: runs the simulator from a settings file, or from a page in the browser (the GUI).
+[dependencies]
+sim-core = { path = "../sim-core" }
+sim-urdf = { path = "../sim-urdf" }
+sim-task = { path = "../sim-task" }

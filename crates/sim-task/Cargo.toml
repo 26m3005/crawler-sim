@@ -1,0 +1,9 @@
+[package]
+name = "sim-task"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+sim-core = { path = "../sim-core" }
+sim-urdf = { path = "../sim-urdf" }

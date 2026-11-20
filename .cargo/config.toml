@@ -1,0 +1,4 @@
+# Link the C runtime into the binaries on Windows, so sim_py.dll needs nothing beyond Windows
+# itself (no Visual C++ Redistributable on the PC that runs it).
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
